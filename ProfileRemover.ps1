@@ -55,50 +55,76 @@ RemoveProfiles.ps1 -Days 180 -Old -Disabled -Computer Workstation1
 RemoveProfiles.ps1 -Disabled -Invalid -NonInteractive
 
 .NOTES
-# 8/24/21 Steve Oliver - changed user directory removal to use Start-Process to avoid message that UNC paths are not supported
-# 8/30/21 Steve Oliver - added an option to remove user profiles that haven't been used in over 6 months.  Also added profile age to invalid user accounts.
-
-# remote registry seems to requires  [Microsoft.Win32.RegistryKey]::OpenRemoteBaseKey
-# onenote: Get Installed Applications/Software
-# http://vcloud-lab.com/entries/powershell/powershell-get-registry-value-data
-# https://superuser.com/questions/1521495/using-remote-registry-in-powershell
-# ** this won't work due to GPO **
-# We are restricting remote registry access to NT AUTHORITY accounts (which is why it works from regedit.exe) or domain admins
-# my ADM account is a member of domain admins but it still doesn't work
-
-# doing this to see if querying reg load times works better than Temp folder
-#https://www.reddit.com/r/sysadmin/comments/14vwe0i/user_profile_cleanup_gpo_delprof2_doesnt_work/
-
+2021.08.24 - changed user directory removal to use Start-Process to avoid message that UNC paths are not supported
+2021.08.30 - added an option to remove user profiles that haven't been used in over 6 months.  Also added profile age to invalid user accounts.
+2023.11.04 - complete rewrite.
+                - added parameters to allow different options
+                - no longer using dsquery.exe or ActiveDirectory module to check AD
+                    - changed to ADSI LDAP query
+                - all information is now gathered and parsed before asking for confirmations
+                - added method to exclude local accounts from consideration
+                - check if computer is alive before attempting get-wmiobject
+                - provide duration of execution statistics
+                - added progress bar
+                - added -All parameter and removed -Old, since it is implied by -Days
+                - fixed: bug in confirmations when profiles were detected for parameter types that were not specified
+                - fixed: parameter issues where -NonInteractive or -Computer were used without other parameters
 #>
 
-#Requires -Modules ActiveDirectory
+#Requires -Version 3
 
-[CmdletBinding(DefaultParameterSetName = 'None')]
+[CmdletBinding(DefaultParameterSetName = 'Independent')]
 param(
-    # [Parameter(Mandatory=$True,ParameterSetName='all')]
-    [Parameter(Mandatory=$True,ParameterSetName='old')]
+    [Parameter(ParameterSetName='AllTheThings')]
+    [switch]$All,
+
+    [Parameter(Mandatory=$True,ParameterSetName='AllTheThings')]
+    [Parameter(ParameterSetName='Independent')]
     [int]$Days,
 
-    [Parameter(Mandatory=$True,ParameterSetName='old')]
-    [switch]$Old,
-
+    [Parameter(ParameterSetName='Independent')]
     [switch]$Disabled,
 
+    [Parameter(ParameterSetName='Independent')]
     [switch]$Invalid,
 
-    [switch]$NonInteractive = $False,
+    [switch]$NonInteractive,
 
     [string]$Computer = $env:COMPUTERNAME
-
-    # [Parameter(ParameterSetName='all')]
-    # [switch]$All
 )
-# If ( $All ) {
-#     $Disabled = $True
-#     $Invalid = $True
-#     $Old = $True
-# }
 
+If ( $All ) {
+    $Disabled = $True
+    $Invalid = $True
+}
+
+If ( $NonInteractive -and -not($Days -or $Disabled -or $Invalid) ) {
+    Write-Host "-NonInteractive must be paired with one of the following options:" -ForegroundColor Red
+    Write-Host "Days"
+    Write-Host "Disabled"
+    Write-Host "Invalid"
+    10..1 | ForEach-Object {
+        Write-Progress -Activity "Closing in..." -Status $_ -PercentComplete ($_)
+        Start-Sleep 1
+        }
+    Exit
+}
+
+If ( $Computer -and -not($Days -or $Disabled -or $Invalid) ) {
+    Write-Host "-Computer must be paired with one of the following options:" -ForegroundColor Red
+    Write-Host "Days"
+    Write-Host "Disabled"
+    Write-Host "Invalid"
+    10..1 | ForEach-Object {
+        Write-Progress -Activity "Closing in..." -Status $_ -PercentComplete ($_)
+        Start-Sleep 1
+        }
+    Exit
+}
+
+If ( $Computer -eq $env:COMPUTERNAME ) {
+    #Requires -RunAsAdministrator
+}
 
 Write-Host "
 Enter a computer name when prompted, and this script will retrieve the cached domain accounts.
@@ -108,7 +134,16 @@ Profiles that are not local accounts and do not exist in AD, will also automatic
 You will be able to review (and individually approve) the old, yet valid, profiles before removal.
 " -ForegroundColor Yellow
 
-Write-Host "$Computer`n"
+If ( Test-Connection $Computer -Count 1 -Quiet ) {
+    Write-Host "Computer: " -NoNewline
+    Write-Host "$Computer`n" -ForegroundColor Green
+} else {
+    Write-Host "Computer: " -NoNewline
+    Write-Host "$Computer`n" -ForegroundColor Red
+    Write-Host "The target computer is unavailable.  Script will exit."
+    Pause
+    Exit
+}
 
 
 
@@ -185,7 +220,7 @@ $InvalidAccounts = @() # not exist in AD
 $DisabledAccounts = @() # exist in AD but is disabled
 $LocalAccounts = Get-WmiObject Win32_UserAccount -Filter "LocalAccount='True'" -ComputerName $Computer
 $AllAccounts = Get-WmiObject Win32_UserProfile -Filter "Loaded='False' AND Special='False'" -ComputerName $Computer
-$Deadline = New-Timespan -days $Days
+If ( $Days ) { $Deadline = New-Timespan -days $Days }
 
 
 
@@ -216,16 +251,19 @@ Foreach ( $Account in $ValidAccounts ) {
     $UserName = UserInfo $Account -Username
 
     # check if disabled
-    if (-not( (Get-ADUser $Account.SID).Enabled )) {
+    $Check = [ADSI] "LDAP://<SID=$($Account.SID)>"
+    if ( $Check.userAccountControl.Value -eq 514 ) {
         $DisabledAccounts += $Account
         Continue
     }
 
     If ( Test-Path "\\$Computer\C$\Users\$UserName" ) {
         If ( Test-Path "\\$Computer\C$\Users\$UserName\Appdata\Local\Temp" ) {
-            $Age = (Get-ChildItem "\\$Computer\C$\Users\$UserName\Appdata\Local" Temp -Directory).LastWriteTime
-            If ( ((Get-Date) - $Age) -ge $Deadline ) {
-                $OldAccounts += $Account
+            If ( $Days ) {
+                $Age = (Get-ChildItem "\\$Computer\C$\Users\$UserName\Appdata\Local" Temp -Directory).LastWriteTime
+                If ( ((Get-Date) - $Age) -ge $Deadline ) {
+                    $OldAccounts += $Account
+                }
             }
         } else {
             # broken account that's taking up space
@@ -262,7 +300,7 @@ If ( $Invalid ) {
     }
 }
 
-If ( $Old ) {
+If ( $Days ) {
     If ( $OldAccounts ) {
         Write-Host "The following accounts have not been used in >$Days days ($($OldAccounts.Count)):" -ForegroundColor Red
         ForEach ( $Account in $OldAccounts ) {
@@ -292,7 +330,7 @@ If ( $Old ) {
 }
 
 
-If ( $DisabledAccounts -or $InvalidAccounts -or $OldList -or $InvalidAccounts ) {
+If ( ($DisabledAccounts -and $Disabled) -or ($InvalidAccounts -and $Invalid) -or (($OldList -or $OldAccounts) -and $Days) ) {
     If (-not( $NonInteractive )) {
         Write-Host "`nAbout to delete accounts. Enter Y to proceed.  Any other action will abort" -ForegroundColor Yellow -NoNewline
         $Answer = Read-Host -Prompt "."
@@ -307,6 +345,8 @@ If ( $DisabledAccounts -or $InvalidAccounts -or $OldList -or $InvalidAccounts ) 
     Write-Host "No profiles were found that need removal, per the provided criteria.  :)" -ForegroundColor Green
     Break
 }
+
+
 
 ################
 # Remove Accounts
@@ -330,7 +370,7 @@ If ( $Invalid ) {
     }
 }
 
-If ( $Old ) {
+If ( $Days ) {
     $Step = 0
     If ( $OldList ) {
         ForEach ($Account in $OldList){
