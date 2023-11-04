@@ -152,7 +152,10 @@ If ( Test-Connection $Computer -Count 1 -Quiet ) {
     Write-Host "Computer: " -NoNewline
     Write-Host "$Computer`n" -ForegroundColor Red
     Write-Host "The target computer is unavailable.  Script will exit."
-    Pause
+    10..1 | ForEach-Object {
+        Write-Progress -Activity "Closing in..." -Status $_ -PercentComplete ($_)
+        Start-Sleep 1
+        }
     Exit
 }
 
