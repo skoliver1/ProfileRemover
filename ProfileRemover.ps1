@@ -69,6 +69,7 @@ RemoveProfiles.ps1 -Disabled -Invalid -NonInteractive
                 - added -All parameter and removed -Old, since it is implied by -Days
                 - fixed: bug in confirmations when profiles were detected for parameter types that were not specified
                 - fixed: parameter issues where -NonInteractive or -Computer were used without other parameters
+                - fixed: I thought I could make #Requires -runasadministrator a condietional thing, but it didn't work.
 #>
 
 #Requires -Version 3
@@ -123,7 +124,17 @@ If ( $Computer -and -not($Days -or $Disabled -or $Invalid) ) {
 }
 
 If ( $Computer -eq $env:COMPUTERNAME ) {
-    #Requires -RunAsAdministrator
+    If (-not( [bool](([System.Security.Principal.WindowsIdentity]::GetCurrent()).groups -match "S-1-5-32-544") )) {
+        Write-Host "`n`n*** ERROR ***" -ForegroundColor Red
+        Write-Host "This script requires elevated permissions."
+        Write-Host "Either run this script from a CMD/Powershell window that has 'Administrator:' at the top."
+        Write-Host "or right-click the .BAT file and choose 'Run as administrator'.`n`n"
+        10..1 | ForEach-Object {
+            Write-Progress -Activity "Closing in..." -Status $_ -PercentComplete ($_)
+            Start-Sleep 1
+            }
+        Exit
+    }
 }
 
 Write-Host "
