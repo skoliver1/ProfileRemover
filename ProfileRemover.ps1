@@ -55,6 +55,9 @@ RemoveProfiles.ps1 -Days 180 -Old -Disabled -Computer Workstation1
 RemoveProfiles.ps1 -Disabled -Invalid -NonInteractive
 
 .NOTES
+Created by skoliver1
+https://github.com/skoliver1/ProfileRemover
+
 2021.08.24 - changed user directory removal to use Start-Process to avoid message that UNC paths are not supported
 2021.08.30 - added an option to remove user profiles that haven't been used in over 6 months.  Also added profile age to invalid user accounts.
 2023.11.04 - complete rewrite.
