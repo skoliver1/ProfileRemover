@@ -328,7 +328,7 @@ If ( $Days ) {
         }
 
         If (-not( $NonInteractive )) {
-            Write-Host "`nIf want to exclude any of the above accounts, enter Y and we'll go through them one by one.  Any other action will continue" -ForegroundColor Yellow -NoNewLine
+            Write-Host "`nIf want to exclude any of the above OLD accounts, enter Y and we'll go through them one by one.  Any other action will continue" -ForegroundColor Yellow -NoNewLine
             $Answer = Read-Host -Prompt "."
             If ( $Answer -eq "y" ) {
                 $OldList = @()
