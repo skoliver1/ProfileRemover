@@ -51,7 +51,6 @@ The computer name to run the script against.  If omitted, the default name is th
 which the script is running.
 
 .PARAMETER All
-To do:
 Using this paramter implies Disabled, Invalid and Old parameters.  Days value will need to be provided.
 
 Example: RemoveProfiles.ps1 -All -Days 180 -NonInteractive
