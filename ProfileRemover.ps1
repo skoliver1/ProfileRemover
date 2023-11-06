@@ -41,7 +41,7 @@ is a good indicator of when the profile was last logged into.
 
 Indicate the number of days to identify a profile that should be deleted.
 
-Example: RemoveProfiles.ps1 -Days 90
+Example: ProfileRemover.ps1 -Days 90
 
 .PARAMETER NonInteractive
 Used when you want to automatically perform all requsted deletions without verification.
@@ -53,17 +53,17 @@ which the script is running.
 .PARAMETER All
 Using this paramter implies Disabled, Invalid and Old parameters.  Days value will need to be provided.
 
-Example: RemoveProfiles.ps1 -All -Days 180 -NonInteractive
+Example: ProfileRemover.ps1 -All -Days 180 -NonInteractive
 
 .PARAMETER Exclude
 Comma separated list of USERNAMES to exclude from consideration.
 
-Example: RemoveProfiles.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,Admin*
+Example: ProfileRemover.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,Admin*
 
 .EXAMPLE
-RemoveProfiles.ps1 -Days 180 -Old -Disabled -Computer Workstation1
-RemoveProfiles.ps1 -Disabled -Invalid -NonInteractive
-RemoveProfiles.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,Admin*
+ProfileRemover.ps1 -Days 180 -Old -Disabled -Computer Workstation1
+ProfileRemover.ps1 -Disabled -Invalid -NonInteractive
+ProfileRemover.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,Admin*
 
 .NOTES
 Created by skoliver1
