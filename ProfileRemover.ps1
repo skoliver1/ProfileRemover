@@ -36,8 +36,12 @@ If the -NonInteractive swith is not used, the default behavior will display the 
 and then give you an option to delete all or exclude specific ones.
 
 .PARAMETER Days
-Mandatory option if the -Old parameter is used.
+Use this option to consider profiles for deletion based on age of the %LocalAppData%\Temp folder, which
+is a good indicator of when the profile was last logged into.
+
 Indicate the number of days to identify a profile that should be deleted.
+
+Example: RemoveProfiles.ps1 -Days 90
 
 .PARAMETER NonInteractive
 Used when you want to automatically perform all requsted deletions without verification.
@@ -50,16 +54,27 @@ which the script is running.
 To do:
 Using this paramter implies Disabled, Invalid and Old parameters.  Days value will need to be provided.
 
+Example: RemoveProfiles.ps1 -All -Days 180 -NonInteractive
+
+.PARAMETER Exclude
+Comma separated list of USERNAMES to exclude from consideration.
+
+Example: RemoveProfiles.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,Admin*
+
 .EXAMPLE
 RemoveProfiles.ps1 -Days 180 -Old -Disabled -Computer Workstation1
 RemoveProfiles.ps1 -Disabled -Invalid -NonInteractive
+RemoveProfiles.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,Admin*
 
 .NOTES
 Created by skoliver1
 https://github.com/skoliver1/ProfileRemover
 
-2021.08.24 - changed user directory removal to use Start-Process to avoid message that UNC paths are not supported
-2021.08.30 - added an option to remove user profiles that haven't been used in over 6 months.  Also added profile age to invalid user accounts.
+2023.11.05 - fixed: bug with 'anonymous login' account (SID: S-1-5-7). Due to no localpath it was causing an error.
+                Since it does not take up drive space, I'm excluding it from consideration.
+                - added -Exclude parameter
+                - changed some prompt wording
+                - changed release notes order
 2023.11.04 - complete rewrite.
                 - added parameters to allow different options
                 - no longer using dsquery.exe or ActiveDirectory module to check AD
@@ -73,6 +88,9 @@ https://github.com/skoliver1/ProfileRemover
                 - fixed: bug in confirmations when profiles were detected for parameter types that were not specified
                 - fixed: parameter issues where -NonInteractive or -Computer were used without other parameters
                 - fixed: I thought I could make #Requires -runasadministrator a condietional thing, but it didn't work.
+2021.08.30 - added an option to remove user profiles that haven't been used in over 6 months.  Also added profile age to invalid user accounts.
+2021.08.24 - changed user directory removal to use Start-Process to avoid message that UNC paths are not supported
+
 #>
 
 #Requires -Version 3
@@ -94,7 +112,9 @@ param(
 
     [switch]$NonInteractive,
 
-    [string]$Computer = $env:COMPUTERNAME
+    [string]$Computer = $env:COMPUTERNAME,
+
+    $Exclude
 )
 
 If ( $All ) {
@@ -145,7 +165,7 @@ Enter a computer name when prompted, and this script will retrieve the cached do
 Disabled AD user profiles will automatically be removed.
 Profiles that are not local accounts and do not exist in AD, will also automatically be removed.
 
-You will be able to review (and individually approve) the old, yet valid, profiles before removal.
+You will be able to review (and individually approve) the OLD, yet valid, profiles before removal.
 " -ForegroundColor Yellow
 
 If ( Test-Connection $Computer -Count 1 -Quiet ) {
@@ -235,10 +255,10 @@ $OldAccounts = @() # old, valid accounts
 $ValidAccounts = @() # exists in AD
 $InvalidAccounts = @() # not exist in AD
 $DisabledAccounts = @() # exist in AD but is disabled
+$ExcludedAccounts = @()
 $LocalAccounts = Get-WmiObject Win32_UserAccount -Filter "LocalAccount='True'" -ComputerName $Computer
 $AllAccounts = Get-WmiObject Win32_UserProfile -Filter "Loaded='False' AND Special='False'" -ComputerName $Computer
 If ( $Days ) { $Deadline = New-Timespan -days $Days }
-
 
 
 ################
@@ -247,8 +267,19 @@ If ( $Days ) { $Deadline = New-Timespan -days $Days }
 
 # Separate local vs domain accounts
 ForEach ($Account in $AllAccounts){
+    $Skip = $null
     # skip local accounts
     If ( $Account.SID -in $LocalAccounts.SID ) {Continue}
+    If ( $Account.SID -eq "S-1-5-7" ) {Continue} # Anonymous login > https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers
+    If ( $Exclude ) {
+        Foreach ( $Exclusion in $Exclude ) {
+            If ( $Account.LocalPath -like "C:\Users\$Exclusion" ) {
+                $ExcludedAccounts += $Account
+                $Skip = 1
+            }
+        }
+    }
+    If ( $Skip ) { Continue }
 
     # check if the account is in Active Directory
     $SID = UserInfo $Account -SID
@@ -297,6 +328,14 @@ Foreach ( $Account in $ValidAccounts ) {
 # Confirmations
 ################
 
+If ( $ExcludedAccounts ) {
+    Write-Host "Excluded profiles ($($ExcludedAccounts.Count)):" -ForegroundColor Yellow
+    ForEach ( $Item in $ExcludedAccounts ) {
+        Write-Host $Item.LocalPath -ForegroundColor Red
+    }
+    Write-Host ""
+}
+
 If ( $Disabled ) {
     If ( $DisabledAccounts ) {
         Write-Host "Disabled users to be removed ($($DisabledAccounts.Count)):" -ForegroundColor Red
@@ -319,7 +358,7 @@ If ( $Invalid ) {
 
 If ( $Days ) {
     If ( $OldAccounts ) {
-        Write-Host "The following accounts have not been used in >$Days days ($($OldAccounts.Count)):" -ForegroundColor Red
+        Write-Host "The following validated accounts have not been used in >$Days days ($($OldAccounts.Count)):" -ForegroundColor Red
         ForEach ( $Account in $OldAccounts ) {
             $UserName = UserInfo $Account -Username
             $SID = UserInfo $Account -SID
