@@ -148,7 +148,7 @@ If ( $Computer -and -not($Days -or $Disabled -or $Invalid) ) {
 
 If ( $Computer -eq $env:COMPUTERNAME ) {
     If (-not( [bool](([System.Security.Principal.WindowsIdentity]::GetCurrent()).groups -match "S-1-5-32-544") )) {
-        Write-Host "`n`n*** ERROR ***" -ForegroundColor Red
+        Write-Host "`n`n`n`n`n`n`n`n`n`n*** ERROR ***" -ForegroundColor Red
         Write-Host "This script requires elevated permissions."
         Write-Host "Either run this script from a CMD/Powershell window that has 'Administrator:' at the top."
         Write-Host "or right-click the .BAT file and choose 'Run as administrator'.`n`n"
@@ -394,7 +394,7 @@ If ( ($DisabledAccounts -and $Disabled) -or ($InvalidAccounts -and $Invalid) -or
             Break
         }
     } else {
-        Write-Host "`nExecute order 66!`n" -ForegroundColor Red
+        # Do nothing
     }
     Write-Host "`nExecute order 66!`n" -ForegroundColor Red
 } else {
