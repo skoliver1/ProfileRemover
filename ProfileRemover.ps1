@@ -122,7 +122,7 @@ If ( $All ) {
 }
 
 If ( $NonInteractive -and -not($Days -or $Disabled -or $Invalid) ) {
-    Write-Host "-NonInteractive must be paired with one of the following options:" -ForegroundColor Red
+    Write-Host "`n`n`n`n`n`n`n`n-NonInteractive must be paired with one of the following options:" -ForegroundColor Red
     Write-Host "Days"
     Write-Host "Disabled"
     Write-Host "Invalid"
@@ -134,7 +134,7 @@ If ( $NonInteractive -and -not($Days -or $Disabled -or $Invalid) ) {
 }
 
 If ( $Computer -and -not($Days -or $Disabled -or $Invalid) ) {
-    Write-Host "-Computer must be paired with one of the following options:" -ForegroundColor Red
+    Write-Host "`n`n`n`n`n`n`n`n-Computer must be paired with one of the following options:" -ForegroundColor Red
     Write-Host "Days"
     Write-Host "Disabled"
     Write-Host "Invalid"
