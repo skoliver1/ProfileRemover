@@ -51,6 +51,7 @@ The computer name to run the script against.  If omitted, the default name is th
 which the script is running.
 
 .PARAMETER All
+To do:
 Using this paramter implies Disabled, Invalid and Old parameters.  Days value will need to be provided.
 
 Example: ProfileRemover.ps1 -All -Days 180 -NonInteractive
@@ -69,6 +70,9 @@ ProfileRemover.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,Admin
 Created by skoliver1
 https://github.com/skoliver1/ProfileRemover
 
+2024.04.21 - fixed: broken/non-AD accounts were not being considered with -Days parameter
+                - added confirmation section to InvalidAccounts section
+                - changed some wording for accuracy and consistency
 2023.11.05 - fixed: bug with 'anonymous login' account (SID: S-1-5-7). Due to no localpath it was causing an error.
                 Since it does not take up drive space, I'm excluding it from consideration.
                 - added -Exclude parameter
@@ -116,13 +120,15 @@ param(
     $Exclude
 )
 
+$ProgressPreference = "Continue" # to ensure Write-Progress displays
+
 If ( $All ) {
     $Disabled = $True
     $Invalid = $True
 }
 
 If ( $NonInteractive -and -not($Days -or $Disabled -or $Invalid) ) {
-    Write-Host "`n`n`n`n`n`n`n`n-NonInteractive must be paired with one of the following options:" -ForegroundColor Red
+    Write-Host "-NonInteractive must be paired with one of the following options:" -ForegroundColor Red
     Write-Host "Days"
     Write-Host "Disabled"
     Write-Host "Invalid"
@@ -134,7 +140,7 @@ If ( $NonInteractive -and -not($Days -or $Disabled -or $Invalid) ) {
 }
 
 If ( $Computer -and -not($Days -or $Disabled -or $Invalid) ) {
-    Write-Host "`n`n`n`n`n`n`n`n-Computer must be paired with one of the following options:" -ForegroundColor Red
+    Write-Host "-Computer must be paired with one of the following options:" -ForegroundColor Red
     Write-Host "Days"
     Write-Host "Disabled"
     Write-Host "Invalid"
@@ -160,11 +166,8 @@ If ( $Computer -eq $env:COMPUTERNAME ) {
 }
 
 Write-Host "
-Enter a computer name when prompted, and this script will retrieve the cached domain accounts.
-Disabled AD user profiles will automatically be removed.
-Profiles that are not local accounts and do not exist in AD, will also automatically be removed.
-
-You will be able to review (and individually approve) the OLD, yet valid, profiles before removal.
+This script will retrieve the cached profiles of the indicated computer.
+You will be able to review (and individually approve) the old or invalid profiles before removal.
 " -ForegroundColor Yellow
 
 If ( Test-Connection $Computer -Count 1 -Quiet ) {
@@ -187,33 +190,33 @@ If ( Test-Connection $Computer -Count 1 -Quiet ) {
 # Functions
 ################
 
-<#
-.SYNOPSIS
-
-
-.DESCRIPTION
-Long description
-
-.PARAMETER Account
-An account object returned from Get-WMIObject Win32_UserAccount
-
-.PARAMETER SID
-Switch parameter.  Indicating that you want a System.Security.Principal.SecurityIdentifier
-returned for the SID of the Account
-
-.PARAMETER Username
-Switch parameter.  Indicating you just want the username from the trimmed LocalPath
-
-.EXAMPLE
-$AllAccounts = Get-WmiObject Win32_UserAccount -Filter "LocalAccount='True'"
-UserInfo $AllAccounts[0] -Username
-$SID = UserInfo $AllAccounts[1] -SID
-$SID.Translate([System.Security.Principal.NTAccount]).Value
-
-.NOTES
-
-#>
 function UserInfo {
+    <#
+    .SYNOPSIS
+    Returns either SID or username from userprofile info.
+
+    .DESCRIPTION
+    Long description
+
+    .PARAMETER Account
+    An account object returned from Get-WMIObject Win32_UserAccount
+
+    .PARAMETER SID
+    Switch parameter.  Indicating that you want a System.Security.Principal.SecurityIdentifier
+    returned for the SID of the Account
+
+    .PARAMETER Username
+    Switch parameter.  Indicating you just want the username from the trimmed LocalPath
+
+    .EXAMPLE
+    $AllAccounts = Get-WmiObject Win32_UserAccount -Filter "LocalAccount='True'"
+    UserInfo $AllAccounts[0] -Username
+    $SID = UserInfo $AllAccounts[1] -SID
+    $SID.Translate([System.Security.Principal.NTAccount]).Value
+
+    .NOTES
+
+    #>
     param(
         [parameter(Mandatory = $true)]$Account,
         [switch]$SID,
@@ -278,21 +281,22 @@ ForEach ($Account in $AllAccounts){
             }
         }
     }
-    If ( $Skip ) { Continue }
+    If ( $Skip ) { Continue } else { $ValidAccounts += $Account }
 
     # check if the account is in Active Directory
     $SID = UserInfo $Account -SID
     Try {
         $null = $SID.Translate([System.Security.Principal.NTAccount])
-        $ValidAccounts += $Account
     } Catch {
         # non-local account that doesn't exist in AD
         $InvalidAccounts += $Account
     }
 }
 
+
 # Separate enabled vs disabled domain accounts
-# Check ages of enabled accounts
+# Check ages of accounts
+$ValidAccounts = $ValidAccounts | Sort-Object -Property LocalPath
 Foreach ( $Account in $ValidAccounts ) {
 
     $UserName = UserInfo $Account -Username
@@ -301,7 +305,6 @@ Foreach ( $Account in $ValidAccounts ) {
     $Check = [ADSI] "LDAP://<SID=$($Account.SID)>"
     if ( $Check.userAccountControl.Value -eq 514 ) {
         $DisabledAccounts += $Account
-        Continue
     }
 
     If ( Test-Path "\\$Computer\C$\Users\$UserName" ) {
@@ -322,6 +325,7 @@ Foreach ( $Account in $ValidAccounts ) {
         Continue
     }
 }
+$InvalidAccounts = $InvalidAccounts | Sort-Object -Property LocalPath
 
 ################
 # Confirmations
@@ -329,49 +333,93 @@ Foreach ( $Account in $ValidAccounts ) {
 
 If ( $ExcludedAccounts ) {
     Write-Host "Excluded profiles ($($ExcludedAccounts.Count)):" -ForegroundColor Yellow
+    $ExcludedAccounts = $ExcludedAccounts | Sort-Object -Property LocalPath
     ForEach ( $Item in $ExcludedAccounts ) {
-        Write-Host $Item.LocalPath -ForegroundColor Red
+        $UserName = UserInfo $Item -Username
+        $SID = UserInfo $Item -SID
+        Try {
+            Write-Host $SID.Translate([System.Security.Principal.NTAccount]).Value
+        } Catch {
+            Write-Host $UserName
+        }
     }
     Write-Host ""
 }
 
 If ( $Disabled ) {
     If ( $DisabledAccounts ) {
-        Write-Host "Disabled users to be removed ($($DisabledAccounts.Count)):" -ForegroundColor Red
-        $DisabledAccounts.LocalPath | Sort-Object
+        Write-Host "Disabled profiles to be removed ($($DisabledAccounts.Count)):" -ForegroundColor Red
+        # $DisabledAccounts = $DisabledAccounts | Sort-Object -Property LocalPath
+        ForEach ( $Item in $DisabledAccounts ) {
+            $UserName = UserInfo $Item -Username
+            $SID = UserInfo $Item -SID
+            Try {
+                Write-Host $SID.Translate([System.Security.Principal.NTAccount]).Value
+            } Catch {
+                Write-Host $UserName
+            }
+        }
         Write-Host ""
     } else {
-        Write-Host "No disabled account profiles found." -ForegroundColor Green
+        Write-Host "No disabled profiles found." -ForegroundColor Green
     }
 }
 
 If ( $Invalid ) {
     If ( $InvalidAccounts ) {
-        Write-Host "Invalid accounts to be removed ($($InvalidAccounts.Count)):" -ForegroundColor Red
-        $InvalidAccounts.LocalPath | Sort-Object
+        Write-Host "Invalid profiles to be removed ($($InvalidAccounts.Count)):" -ForegroundColor Red
+        # $InvalidAccounts = $InvalidAccounts | Sort-Object -Property LocalPath
+        ForEach ( $Item in $InvalidAccounts ) {
+            $UserName = UserInfo $Item -Username
+            $SID = UserInfo $Item -SID
+            Try {
+                Write-Host $SID.Translate([System.Security.Principal.NTAccount]).Value
+            } Catch {
+                Write-Host $UserName
+            }
+        }
         Write-Host ""
+
+        If (-not( $NonInteractive )) {
+            Write-Host "`nIf want to exclude any of the above INVALID profiles (non-local, non-AD), enter Y and we'll go through them one by one.  Any other action will continue" -ForegroundColor Yellow -NoNewLine
+            $Answer = Read-Host -Prompt "."
+            If ( $Answer -eq "y" ) {
+                $InvalidList = @()
+                ForEach ( $Account in $InvalidAccounts ) {
+                    Write-Host "Enter Y to remove this profile.  Any other action will exclude it - `"$(UserInfo $Account -Username)`"" -ForegroundColor Yellow -NoNewline
+                    $Answer = Read-Host -Prompt "."
+                    If ($Answer -eq "y"){
+                        $InvalidList += $Account
+                    }
+                }
+            }
+        }
     } else {
-        Write-Host "No invalid domain accounts were found." -ForegroundColor Green
+        Write-Host "No invalid profiles were found." -ForegroundColor Green
     }
 }
 
 If ( $Days ) {
     If ( $OldAccounts ) {
-        Write-Host "The following validated accounts have not been used in >$Days days ($($OldAccounts.Count)):" -ForegroundColor Red
+        Write-Host "The following profiles have not been used in >$Days days ($($OldAccounts.Count)):" -ForegroundColor Red
         ForEach ( $Account in $OldAccounts ) {
             $UserName = UserInfo $Account -Username
             $SID = UserInfo $Account -SID
-            Write-Host $SID.Translate([System.Security.Principal.NTAccount]).Value -NoNewline
+            Try {
+                Write-Host $SID.Translate([System.Security.Principal.NTAccount]).Value -NoNewline
+            } Catch {
+                Write-Host $UserName -NoNewline
+            }
             Write-Host "   LastLoaded: $((Get-ChildItem "\\$Computer\C$\Users\$UserName\Appdata\Local" Temp -Directory).LastWriteTime)"
         }
 
         If (-not( $NonInteractive )) {
-            Write-Host "`nIf want to exclude any of the above OLD accounts, enter Y and we'll go through them one by one.  Any other action will continue" -ForegroundColor Yellow -NoNewLine
+            Write-Host "`nIf want to exclude any of the above OLD profiles, enter Y and we'll go through them one by one.  Any other action will continue" -ForegroundColor Yellow -NoNewLine
             $Answer = Read-Host -Prompt "."
             If ( $Answer -eq "y" ) {
                 $OldList = @()
                 ForEach ( $Account in $OldAccounts ) {
-                    Write-Host "Enter Y to remove this account.  Any other action will exclude it - `"$(UserInfo $Account -Username)`"" -ForegroundColor Yellow -NoNewline
+                    Write-Host "Enter Y to remove this profile.  Any other action will exclude it - `"$(UserInfo $Account -Username)`"" -ForegroundColor Yellow -NoNewline
                     $Answer = Read-Host -Prompt "."
                     If ($Answer -eq "y"){
                         $OldList += $Account
@@ -380,14 +428,14 @@ If ( $Days ) {
             }
         }
     } else {
-        Write-Host "No valid domain accounts were found that are older than $Days days." -ForegroundColor Green
+        Write-Host "No profiles were found that are older than $Days days." -ForegroundColor Green
     }
 }
 
 
-If ( ($DisabledAccounts -and $Disabled) -or ($InvalidAccounts -and $Invalid) -or (($OldList -or $OldAccounts) -and $Days) ) {
+If ( ($DisabledAccounts -and $Disabled) -or ($InvalidList -and $Invalid) -or (($OldList -or $OldAccounts) -and $Days) ) {
     If (-not( $NonInteractive )) {
-        Write-Host "`nAbout to delete accounts. Enter Y to proceed.  Any other action will abort" -ForegroundColor Yellow -NoNewline
+        Write-Host "`nAbout to delete profiles. Enter Y to proceed.  Any other action will abort" -ForegroundColor Yellow -NoNewline
         $Answer = Read-Host -Prompt "."
         If ( $Answer -ne "y" ) {
             Break
@@ -419,7 +467,7 @@ If ( $Disabled ) {
 
 If ( $Invalid ) {
     $Step = 0
-    ForEach ( $Account in $InvalidAccounts ) {
+    ForEach ( $Account in $InvalidList ) {
         Write-Progress -Activity "Invalid profiles" -Status "$($Account.LocalPath)" -PercentComplete (($Step++ / $InvalidAccounts.Count) * 100)
         Execute66 -Account $Account -UserType "invalid"
     }
