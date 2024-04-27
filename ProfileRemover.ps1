@@ -3,30 +3,21 @@
 Windows profile removal script.
 
 .DESCRIPTION
-Queries the specified computer for unloaded, non special accounts that are not local accounts.
+Queries the specified computer for unloaded, non-special profiles. Also excludes local accounts.
+Will delete profiles evaluated based on parameters and values.
 
-Calulating profile age using the modified date of the NTUSER.DAT file is unreliable as the system
-updates them when running Windows Updates.
-
-Calulating the age based on the high and low load times in each profiles registry key would be useful.
-HKLM:\Software\Microsoft\Windows NT\CurrentVersion\ProfileList\*
-LocalProfileLoadTimeHigh
-LocalProfileLoadTimeLow
-
-However, some organizations (like mine) do not allow remote registry access, so obtaining these values
-remotely is difficult or impossible.
-
-A pretty reliable method I've found is the modified time of each user's %LocalAppData%\Temp folder.
-It is extremely unlikly that nothing gets written to this folder each time the user logs on or performs
-daily functions.
-Profile ages will be determined based on this method.
+When used with the -NonInteractive parameter, all deletions will proceed without verification.
+Otherwise, no profiles will be deleted without approval.
 
 .PARAMETER Disabled
-Will automatically delete domain profiles whose corresponding AD account is disabled.
+Detect and delete domain profiles whose corresponding AD account is disabled.
 
 .PARAMETER Invalid
-Will automatically delete domain profiles whos corresponding AD account has been deleted.
-Will also automatically delete corrupted/incomplete domain profiles.  Meaning it is missing the %localappdata%\Temp folder.
+Detect and delete domain profiles whos corresponding AD account has been deleted.
+Detect and delete corrupted/incomplete profiles.  Meaning the C:\Users\<profile> folder exists but not much else.
+
+If the -NonInteractive swith is not used, the default behavior will display the proposed profiles
+and then give you an option to delete all or exclude specific ones.
 
 .PARAMETER Old
 Will evaluate valid and enabled domain accounts based on the number of days provided in the -Days prameter.
@@ -36,40 +27,81 @@ If the -NonInteractive swith is not used, the default behavior will display the 
 and then give you an option to delete all or exclude specific ones.
 
 .PARAMETER Days
-Use this option to consider profiles for deletion based on age of the %LocalAppData%\Temp folder, which
-is a good indicator of when the profile was last logged into.
-
 Indicate the number of days to identify a profile that should be deleted.
+
+Use this option to consider profiles for deletion based on age of the %LocalAppData%\Temp folder, which
+is the best indicator I've found of when the profile was last used.  It is extremely likly that something
+gets written to this folder each time the user logs on or performs daily functions.
+Profile ages will be determined based on this method.
+
+Calulating profile age using the modified date of the NTUSER.DAT file is unreliable as the system
+updates them when running Windows Updates.
+
+Calulating the age based on the high and low load times in each profiles registry key might be useful.
+However, some organizations do not allow remote registry access, so obtaining these values
+remotely is difficult or impossible.
+
+HKLM:\Software\Microsoft\Windows NT\CurrentVersion\ProfileList\*
+LocalProfileLoadTimeHigh
+LocalProfileLoadTimeLow
 
 Example: ProfileRemover.ps1 -Days 90
 
 .PARAMETER NonInteractive
-Used when you want to automatically perform all requsted deletions without verification.
+Used to automatically perform all requsted deletions without verification.
 
 .PARAMETER Computer
 The computer name to run the script against.  If omitted, the default name is the computer from
 which the script is running.
 
 .PARAMETER All
-To do:
-Using this paramter implies Disabled, Invalid and Old parameters.  Days value will need to be provided.
+Using this paramter implies Disabled and Invalid parameters.  Will require -Days value.
 
 Example: ProfileRemover.ps1 -All -Days 180 -NonInteractive
 
 .PARAMETER Exclude
 Comma separated list of USERNAMES to exclude from consideration.
+Evaluated with -like powershell operator.
 
-Example: ProfileRemover.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,Admin*
+Example: ProfileRemover.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,joseph*
 
 .EXAMPLE
-ProfileRemover.ps1 -Days 180 -Old -Disabled -Computer Workstation1
+------ Example 1 ------
+- Remove profiles with no activity > 180 days
+
+ProfileRemover.ps1 -Days 180 -Computer Workstation1
+
+- Will display profiles with %temp% folders with timestamps 180 days or older.
+- User will be promptef if they would like to exclude any of the displayed profiles.
+- After any exclusions, user will be prompted whether to continue and delete the profiles.
+
+------ Example 2 ------
+- Unattended removal of Disabled and Invalid profiles
+
 ProfileRemover.ps1 -Disabled -Invalid -NonInteractive
-ProfileRemover.ps1 -Disabled -Invalid -NonInteractive -Exclude user1,*SQL*,Admin*
+
+- Will display any profile names that exist in Active Directory but are disabled.
+- Will display any orphaned local or AD profiles, or whose profile is incomplete/broken.
+
+------ Example 3 ------
+- Remove all types of profiles: Disabled, Invalid and Old.  Exclude various profile names.
+
+ProfileRemover.ps1 -All -Days 180 -Exclude user1,*SQL*,*joseph
+
+- Will display profiles from excluded that are found but will not be deleted.
+- Will display profiles to be deleted and prompt for additional exclusions, if required.
 
 .NOTES
 Created by skoliver1
 https://github.com/skoliver1/ProfileRemover
 
+2024.04.26 - fixed: known local accounts were being mis-identified as domain accounts when running against $env:ComputerName
+                - fixed: with -NonInteractive, invalid accounts were not being deleted
+                - parsing accounts now excludes non-domain account SID types. e.g. IIS apppool accounts
+                - profiles are now alphabetically sorted in inital gather
+                - if using -Disabled, disabled profiles are no longer evaluated for -Old or -Inavlid, if they are used
+                - updated documentation
+                - additional minor adjustments
 2024.04.21 - fixed: broken/non-AD accounts were not being considered with -Days parameter
                 - added confirmation section to InvalidAccounts section
                 - changed some wording for accuracy and consistency
@@ -128,7 +160,7 @@ If ( $All ) {
 }
 
 If ( $NonInteractive -and -not($Days -or $Disabled -or $Invalid) ) {
-    Write-Host "-NonInteractive must be paired with one of the following options:" -ForegroundColor Red
+    Write-Host "`n`n`n`n`n`n`n`n-NonInteractive must be paired with one of the following options:" -ForegroundColor Red
     Write-Host "Days"
     Write-Host "Disabled"
     Write-Host "Invalid"
@@ -140,7 +172,7 @@ If ( $NonInteractive -and -not($Days -or $Disabled -or $Invalid) ) {
 }
 
 If ( $Computer -and -not($Days -or $Disabled -or $Invalid) ) {
-    Write-Host "-Computer must be paired with one of the following options:" -ForegroundColor Red
+    Write-Host "`n`n`n`n`n`n`n`n-Computer must be paired with one of the following options:" -ForegroundColor Red
     Write-Host "Days"
     Write-Host "Disabled"
     Write-Host "Invalid"
@@ -210,7 +242,7 @@ function UserInfo {
 
     .EXAMPLE
     $AllAccounts = Get-WmiObject Win32_UserAccount -Filter "LocalAccount='True'"
-    UserInfo $AllAccounts[0] -Username
+    UserInfo $AllAccounts[0] -ProfileName
     $SID = UserInfo $AllAccounts[1] -SID
     $SID.Translate([System.Security.Principal.NTAccount]).Value
 
@@ -220,10 +252,10 @@ function UserInfo {
     param(
         [parameter(Mandatory = $true)]$Account,
         [switch]$SID,
-        [switch]$Username
+        [switch]$ProfileName
     )
-    If ( $Username ) {
-        $U = $Account.LocalPath.Replace("C:\Users\","")
+    If ( $ProfileName ) {
+        $U = $Account.LocalPath.Replace("C:\Users\","").ToUpper()
         Return $U
     }
     If ( $SID ) {
@@ -237,7 +269,7 @@ function Execute66 {
         [parameter(Mandatory = $true)]$Account,
         [string]$UserType
     )
-    $Name = UserInfo $Account -Username
+    $Name = UserInfo $Account -ProfileName
     Write-Host "Removing $UserType profile: " -NoNewline
     Write-Host $Name -ForegroundColor Red
     Try {
@@ -254,12 +286,12 @@ function Execute66 {
 ################
 
 $OldAccounts = @() # old, valid accounts
-$ValidAccounts = @() # exists in AD
+$Considerations = @()
 $InvalidAccounts = @() # not exist in AD
 $DisabledAccounts = @() # exist in AD but is disabled
 $ExcludedAccounts = @()
 $LocalAccounts = Get-WmiObject Win32_UserAccount -Filter "LocalAccount='True'" -ComputerName $Computer
-$AllAccounts = Get-WmiObject Win32_UserProfile -Filter "Loaded='False' AND Special='False'" -ComputerName $Computer
+$AllAccounts = Get-WmiObject Win32_UserProfile -Filter "Loaded='False' AND Special='False'" -ComputerName $Computer | Sort-Object LocalPath
 If ( $Days ) { $Deadline = New-Timespan -days $Days }
 
 
@@ -267,50 +299,53 @@ If ( $Days ) { $Deadline = New-Timespan -days $Days }
 # Parse Accounts
 ################
 
-# Separate local vs domain accounts
 ForEach ($Account in $AllAccounts){
     $Skip = $null
     # skip local accounts
     If ( $Account.SID -in $LocalAccounts.SID ) {Continue}
+
+    # skip non-domain accounts
+    # e.g. IIS AppPool user profiles
+    $PatternSID = 'S-1-\d+-\d+-\d+-\d+\-\d+\-\d+$'
+    If ( $Account.SID -notmatch $PatternSID ) {Continue}
+
     If ( $Account.SID -eq "S-1-5-7" ) {Continue} # Anonymous login > https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers
     If ( $Exclude ) {
         Foreach ( $Exclusion in $Exclude ) {
             If ( $Account.LocalPath -like "C:\Users\$Exclusion" ) {
                 $ExcludedAccounts += $Account
-                $Skip = 1
+                $Skip = $True
             }
         }
     }
-    If ( $Skip ) { Continue } else { $ValidAccounts += $Account }
+    If ( $Skip ) { Continue } else { $Considerations += $Account }
 
     # check if the account is in Active Directory
-    $SID = UserInfo $Account -SID
-    Try {
-        $null = $SID.Translate([System.Security.Principal.NTAccount])
-    } Catch {
-        # non-local account that doesn't exist in AD
+    $Check = [ADSI] "LDAP://<SID=$($Account.SID)>"
+    If (-not( $Check.sAMAccountName )){
         $InvalidAccounts += $Account
     }
 }
 
-
 # Separate enabled vs disabled domain accounts
-# Check ages of accounts
-$ValidAccounts = $ValidAccounts | Sort-Object -Property LocalPath
-Foreach ( $Account in $ValidAccounts ) {
+# Check ages of enabled accounts
+Foreach ( $Account in $Considerations ) {
 
-    $UserName = UserInfo $Account -Username
+    $ProfileName = UserInfo $Account -ProfileName
 
-    # check if disabled
-    $Check = [ADSI] "LDAP://<SID=$($Account.SID)>"
-    if ( $Check.userAccountControl.Value -eq 514 ) {
-        $DisabledAccounts += $Account
+    If ( $Disabled ) {
+        # check if disabled
+        $Check = [ADSI] "LDAP://<SID=$($Account.SID)>"
+        if ( $Check.userAccountControl.Value -eq 514 ) {
+            $DisabledAccounts += $Account
+            Continue
+        }
     }
 
-    If ( Test-Path "\\$Computer\C$\Users\$UserName" ) {
-        If ( Test-Path "\\$Computer\C$\Users\$UserName\Appdata\Local\Temp" ) {
+    If ( Test-Path "\\$Computer\C$\Users\$ProfileName" ) {
+        If ( Test-Path "\\$Computer\C$\Users\$ProfileName\Appdata\Local\Temp" ) {
             If ( $Days ) {
-                $Age = (Get-ChildItem "\\$Computer\C$\Users\$UserName\Appdata\Local" Temp -Directory).LastWriteTime
+                $Age = (Get-ChildItem "\\$Computer\C$\Users\$ProfileName\Appdata\Local" Temp -Directory).LastWriteTime
                 If ( ((Get-Date) - $Age) -ge $Deadline ) {
                     $OldAccounts += $Account
                 }
@@ -325,7 +360,6 @@ Foreach ( $Account in $ValidAccounts ) {
         Continue
     }
 }
-$InvalidAccounts = $InvalidAccounts | Sort-Object -Property LocalPath
 
 ################
 # Confirmations
@@ -333,14 +367,13 @@ $InvalidAccounts = $InvalidAccounts | Sort-Object -Property LocalPath
 
 If ( $ExcludedAccounts ) {
     Write-Host "Excluded profiles ($($ExcludedAccounts.Count)):" -ForegroundColor Yellow
-    $ExcludedAccounts = $ExcludedAccounts | Sort-Object -Property LocalPath
     ForEach ( $Item in $ExcludedAccounts ) {
-        $UserName = UserInfo $Item -Username
-        $SID = UserInfo $Item -SID
         Try {
+            $SID = UserInfo $Item -SID
             Write-Host $SID.Translate([System.Security.Principal.NTAccount]).Value
         } Catch {
-            Write-Host $UserName
+            $ProfileName = UserInfo $Item -ProfileName
+            Write-Host $ProfileName
         }
     }
     Write-Host ""
@@ -349,14 +382,13 @@ If ( $ExcludedAccounts ) {
 If ( $Disabled ) {
     If ( $DisabledAccounts ) {
         Write-Host "Disabled profiles to be removed ($($DisabledAccounts.Count)):" -ForegroundColor Red
-        # $DisabledAccounts = $DisabledAccounts | Sort-Object -Property LocalPath
         ForEach ( $Item in $DisabledAccounts ) {
-            $UserName = UserInfo $Item -Username
-            $SID = UserInfo $Item -SID
             Try {
+                $SID = UserInfo $Item -SID
                 Write-Host $SID.Translate([System.Security.Principal.NTAccount]).Value
             } Catch {
-                Write-Host $UserName
+                $ProfileName = UserInfo $Item -ProfileName
+                Write-Host $ProfileName
             }
         }
         Write-Host ""
@@ -368,31 +400,31 @@ If ( $Disabled ) {
 If ( $Invalid ) {
     If ( $InvalidAccounts ) {
         Write-Host "Invalid profiles to be removed ($($InvalidAccounts.Count)):" -ForegroundColor Red
-        # $InvalidAccounts = $InvalidAccounts | Sort-Object -Property LocalPath
         ForEach ( $Item in $InvalidAccounts ) {
-            $UserName = UserInfo $Item -Username
-            $SID = UserInfo $Item -SID
             Try {
+                $SID = UserInfo $Item -SID
                 Write-Host $SID.Translate([System.Security.Principal.NTAccount]).Value
             } Catch {
-                Write-Host $UserName
+                $ProfileName = UserInfo $Item -ProfileName
+                Write-Host $ProfileName
             }
         }
-        Write-Host ""
 
         If (-not( $NonInteractive )) {
-            Write-Host "`nIf want to exclude any of the above INVALID profiles (non-local, non-AD), enter Y and we'll go through them one by one.  Any other action will continue" -ForegroundColor Yellow -NoNewLine
+            Write-Host "`n## Profile Review ##`nIf want to exclude any of the above INVALID profiles (non-local, non-AD), enter Y and we'll go through them one by one.  Any other action will continue" -ForegroundColor Yellow -NoNewLine
             $Answer = Read-Host -Prompt "."
             If ( $Answer -eq "y" ) {
                 $InvalidList = @()
                 ForEach ( $Account in $InvalidAccounts ) {
-                    Write-Host "Enter Y to remove this profile.  Any other action will exclude it - `"$(UserInfo $Account -Username)`"" -ForegroundColor Yellow -NoNewline
+                    Write-Host "Enter Y to remove this profile.  Any other action will exclude it - `"$(UserInfo $Account -ProfileName)`"" -ForegroundColor Yellow -NoNewline
                     $Answer = Read-Host -Prompt "."
                     If ($Answer -eq "y"){
                         $InvalidList += $Account
                     }
                 }
             }
+        } else {
+            $InvalidList = $InvalidAccounts
         }
     } else {
         Write-Host "No invalid profiles were found." -ForegroundColor Green
@@ -403,29 +435,31 @@ If ( $Days ) {
     If ( $OldAccounts ) {
         Write-Host "The following profiles have not been used in >$Days days ($($OldAccounts.Count)):" -ForegroundColor Red
         ForEach ( $Account in $OldAccounts ) {
-            $UserName = UserInfo $Account -Username
-            $SID = UserInfo $Account -SID
             Try {
+                $SID = UserInfo $Account -SID
                 Write-Host $SID.Translate([System.Security.Principal.NTAccount]).Value -NoNewline
             } Catch {
-                Write-Host $UserName -NoNewline
+                $ProfileName = UserInfo $Account -ProfileName
+                Write-Host $ProfileName -NoNewline
             }
-            Write-Host "   LastLoaded: $((Get-ChildItem "\\$Computer\C$\Users\$UserName\Appdata\Local" Temp -Directory).LastWriteTime)"
+            Write-Host "    LastLoaded: $((Get-ChildItem "\\$Computer\C$\Users\$ProfileName\Appdata\Local" Temp -Directory).LastWriteTime)"
         }
 
         If (-not( $NonInteractive )) {
-            Write-Host "`nIf want to exclude any of the above OLD profiles, enter Y and we'll go through them one by one.  Any other action will continue" -ForegroundColor Yellow -NoNewLine
+            Write-Host "`n## Profile Review ##`nIf want to exclude any of the above OLD profiles, enter Y and we'll go through them one by one.  Any other action will continue" -ForegroundColor Yellow -NoNewLine
             $Answer = Read-Host -Prompt "."
             If ( $Answer -eq "y" ) {
                 $OldList = @()
                 ForEach ( $Account in $OldAccounts ) {
-                    Write-Host "Enter Y to remove this profile.  Any other action will exclude it - `"$(UserInfo $Account -Username)`"" -ForegroundColor Yellow -NoNewline
+                    Write-Host "Enter Y to remove this profile.  Any other action will exclude it - `"$(UserInfo $Account -ProfileName)`"" -ForegroundColor Yellow -NoNewline
                     $Answer = Read-Host -Prompt "."
                     If ($Answer -eq "y"){
                         $OldList += $Account
                     }
                 }
             }
+        } else {
+            $OldList += $Account
         }
     } else {
         Write-Host "No profiles were found that are older than $Days days." -ForegroundColor Green
@@ -433,7 +467,7 @@ If ( $Days ) {
 }
 
 
-If ( ($DisabledAccounts -and $Disabled) -or ($InvalidList -and $Invalid) -or (($OldList -or $OldAccounts) -and $Days) ) {
+If ( $DisabledAccounts -or $InvalidList -or $OldList ) {
     If (-not( $NonInteractive )) {
         Write-Host "`nAbout to delete profiles. Enter Y to proceed.  Any other action will abort" -ForegroundColor Yellow -NoNewline
         $Answer = Read-Host -Prompt "."
@@ -475,16 +509,9 @@ If ( $Invalid ) {
 
 If ( $Days ) {
     $Step = 0
-    If ( $OldList ) {
-        ForEach ($Account in $OldList){
-            Write-Progress -Activity "Old profiles" -Status "$($Account.LocalPath)" -PercentComplete (($Step++ / $OldList.Count) * 100)
-            Execute66 -Account $Account -UserType "old"
-        }
-    } else {
-        Foreach ( $Account in $OldAccounts ) {
-            Write-Progress -Activity "Old profiles" -Status "$($Account.LocalPath)" -PercentComplete (($Step++ / $OldAccounts.Count) * 100)
-            Execute66 -Account $Account -UserType "old"
-        }
+    ForEach ($Account in $OldList){
+        Write-Progress -Activity "Old profiles" -Status "$($Account.LocalPath)" -PercentComplete (($Step++ / $OldList.Count) * 100)
+        Execute66 -Account $Account -UserType "old"
     }
 }
 
